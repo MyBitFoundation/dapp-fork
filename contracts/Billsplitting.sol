@@ -50,6 +50,18 @@ contract Billsplitting {
 
     emit LogNewBill(id, _receiver, _total);
   }
+  
+  function listPayers(bytes32 _billID)
+  view
+  external
+  returns(address[]) {
+    uint totalPayers = database.uintStorage(keccak256(abi.encodePacked("billsplittingTotalPayers", _billID))); //Get total employees
+    address[] memory payerList = new address[](totalPayers);
+    for(uint i=0; i<totalPayers; i++){
+      payerList[i] = database.addressStorage(keccak256(abi.encodePacked("billsplittingPayer", _billID, i)));
+    }
+    return payerList;
+  }
 
   function getTotalOwing(bytes32 _billID)
   view
@@ -66,6 +78,7 @@ contract Billsplitting {
     owe = database.uintStorage(keccak256(abi.encodePacked('billsplittingOwing', _billID, msg.sender)));
     return owe;
   }
+  
 
   function payShare(bytes32 _billID)
   payable
@@ -84,12 +97,18 @@ contract Billsplitting {
     }
     database.setUint(keccak256(abi.encodePacked('billsplittingOwing', _billID, msg.sender)), owe.sub(paid));
     database.setUint(keccak256(abi.encodePacked('billsplittingCollected', _billID)), database.uintStorage(keccak256(abi.encodePacked('billsplittingCollected', _billID))).add(paid) );
+    emit LogSharePaid(_billID, msg.sender);
+    if (database.uintStorage(keccak256(abi.encodePacked('billsplittingCollected', _billID))) >= database.uintStorage(keccak256(abi.encodePacked('billsplittingBill', _billID))) ) {
+      database.addressStorage(keccak256(abi.encodePacked('billsplittingReceiver', _billID))).transfer( database.uintStorage(keccak256(abi.encodePacked('billsplittingBill', _billID))) );
+      emit LogFundsReleased(_billID);
+    }
   }
 
   function releaseFunds(bytes32 _billID)
   external{
     require( database.uintStorage(keccak256(abi.encodePacked('billsplittingCollected', _billID))) >= database.uintStorage(keccak256(abi.encodePacked('billsplittingBill', _billID))) );
     database.addressStorage(keccak256(abi.encodePacked('billsplittingReceiver', _billID))).transfer( database.uintStorage(keccak256(abi.encodePacked('billsplittingBill', _billID))) );
+    emit LogFundsReleased(_billID);
   }
 
   //function createBill() external{}
@@ -109,11 +128,12 @@ contract Billsplitting {
     }
   }
   //function changeReceiver()
-  //function getUsersOwing()
 
   //function cancelBill()
 
   event LogNewBill(bytes32 _billID, address _receiver, uint _total);
   event LogAddressChanged(address _oldAddress, address _newAddress);
   event LogAddress(address _address);
+  event LogSharePaid(bytes32 _billID, address _payer);
+  event LogFundsReleased(bytes32 _billID);
 }
