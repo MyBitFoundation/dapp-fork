@@ -31,8 +31,8 @@ contract Billsplitting {
     require(mybBurner.burn(msg.sender, mybFee));
     uint owingSum = 0;
     uint payerOwing = _total.div(_payers.length);
-    //Need to figure out a way to make billID more unique, maybe pass an Invoice #?
-    bytes32 id = keccak256(abi.encodePacked(_receiver, _total));
+
+    bytes32 id = keccak256(abi.encodePacked(_receiver, _total, block.timestamp));
 
     database.setUint(keccak256(abi.encodePacked('billsplittingBill', id)), _total);
     database.setUint(keccak256(abi.encodePacked('billsplittingCollected', id)), 0);
@@ -43,11 +43,12 @@ contract Billsplitting {
     for(uint i=0; i<_payers.length-1; i++){
       database.setAddress(keccak256(abi.encodePacked('billsplittingPayer', id, i)), _payers[i]);
       database.setUint(keccak256(abi.encodePacked('billsplittingOwing', id, _payers[i])), payerOwing);
+      database.setUint(keccak256(abi.encodePacked('billsplittingShare', id, _payers[i])), payerOwing);
       owingSum = owingSum.add(payerOwing);
     }
     database.setAddress(keccak256(abi.encodePacked('billsplittingPayer', id, _payers.length-1)), _payers[_payers.length-1]);
     database.setUint(keccak256(abi.encodePacked('billsplittingOwing', id, _payers[_payers.length-1])), _total.sub(owingSum));
-
+    database.setUint(keccak256(abi.encodePacked('billsplittingShare', id, _payers[_payers.length-1])), _total.sub(owingSum));
     emit LogNewBill(id, _receiver, _total);
   }
   
@@ -55,10 +56,10 @@ contract Billsplitting {
   view
   external
   returns(address[]) {
-    uint totalPayers = database.uintStorage(keccak256(abi.encodePacked("billsplittingTotalPayers", _billID))); //Get total employees
+    uint totalPayers = database.uintStorage(keccak256(abi.encodePacked('billsplittingTotalPayers', _billID)));
     address[] memory payerList = new address[](totalPayers);
     for(uint i=0; i<totalPayers; i++){
-      payerList[i] = database.addressStorage(keccak256(abi.encodePacked("billsplittingPayer", _billID, i)));
+      payerList[i] = database.addressStorage(keccak256(abi.encodePacked('billsplittingPayer', _billID, i)));
     }
     return payerList;
   }
@@ -67,7 +68,8 @@ contract Billsplitting {
   view
   external
   returns(uint owe){
-    owe = database.uintStorage(keccak256(abi.encodePacked('billsplittingBill', _billID))).sub( database.uintStorage(keccak256(abi.encodePacked('billsplittingCollected', _billID))) );
+    owe = database.uintStorage(keccak256(abi.encodePacked('billsplittingBill', _billID)))
+    .sub( database.uintStorage(keccak256(abi.encodePacked('billsplittingCollected', _billID))) );
     return owe;
   }
 
@@ -104,13 +106,6 @@ contract Billsplitting {
     }
   }
 
-  function releaseFunds(bytes32 _billID)
-  external{
-    require( database.uintStorage(keccak256(abi.encodePacked('billsplittingCollected', _billID))) >= database.uintStorage(keccak256(abi.encodePacked('billsplittingBill', _billID))) );
-    database.addressStorage(keccak256(abi.encodePacked('billsplittingReceiver', _billID))).transfer( database.uintStorage(keccak256(abi.encodePacked('billsplittingBill', _billID))) );
-    emit LogFundsReleased(_billID);
-  }
-
   //function createBill() external{}
   function changeUserAddress(bytes32 _billID, address _newAddress)
   external{
@@ -127,13 +122,32 @@ contract Billsplitting {
       }
     }
   }
-  //function changeReceiver()
 
-  //function cancelBill()
+  function cancelBill(bytes32 _billID)
+  external{
+    require(database.addressStorage(keccak256(abi.encodePacked('billsplittingReceiver', _billID))) == msg.sender);
+    uint totalPayers = database.uintStorage(keccak256(abi.encodePacked('billsplittingTotalPayers', _billID)));
+    for(uint i=0; i<totalPayers; i++){
+      address payer = database.addressStorage(keccak256(abi.encodePacked('billsplittingPayer', _billID, i)));
+      uint owing = database.uintStorage(keccak256(abi.encodePacked('billsplittingOwing', _billID, payer)));
+      if(owing == 0) {
+        payer.transfer(database.uintStorage(keccak256(abi.encodePacked('billsplittingShare', _billID, payer))));
+      }
+      database.deleteAddress(keccak256(abi.encodePacked('billsplittingPayer', _billID, payer)));
+      database.deleteUint(keccak256(abi.encodePacked('billsplittingOwing', _billID, payer)));
+      database.deleteUint(keccak256(abi.encodePacked('billsplittingShare', _billID, payer)));
+    }
+    database.deleteUint(keccak256(abi.encodePacked('billsplittingBill', _billID)));
+    database.deleteUint(keccak256(abi.encodePacked('billsplittingCollected', _billID)));
+    database.deleteAddress(keccak256(abi.encodePacked('billsplittingReceiver', _billID)));
+    database.deleteUint(keccak256(abi.encodePacked('billsplittingTotalPayers', _billID)));
+    emit LogBillCancelled(_billID);
+  }
 
   event LogNewBill(bytes32 _billID, address _receiver, uint _total);
   event LogAddressChanged(address _oldAddress, address _newAddress);
   event LogAddress(address _address);
   event LogSharePaid(bytes32 _billID, address _payer);
   event LogFundsReleased(bytes32 _billID);
+  event LogBillCancelled(bytes32 _billID);
 }
